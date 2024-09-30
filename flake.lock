@@ -1,0 +1,43 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1727212539,
+        "narHash": "sha256-ILpReBadytGNiN160EmjYjNlRwSEz5pHJLiSpDa9LqM=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "5fea7ad9096e859723e82e47077d28474fb5e99a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "swift-github": "swift-github"
+      }
+    },
+    "swift-github": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1727207950,
+        "narHash": "sha256-FyRL19n9p/YE7iXK0DXTGKLDlAu+Epkr8YTjppSJ7PI=",
+        "owner": "swiftlang",
+        "repo": "swift",
+        "rev": "7e83e73a5d020082402a4b26c0b62d3c98a3c62f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "swiftlang",
+        "repo": "swift",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

@@ -1,0 +1,21 @@
+diff --git a/lib/Frontend/CompilerInvocation.cpp b/lib/Frontend/CompilerInvocation.cpp
+index 7924dbbc83b..6497c8be2f7 100644
+--- a/lib/Frontend/CompilerInvocation.cpp
++++ b/lib/Frontend/CompilerInvocation.cpp
+@@ -64,11 +64,16 @@ getVersionTuple(const llvm::Triple &triple) {
+ void CompilerInvocation::computeRuntimeResourcePathFromExecutablePath(
+     StringRef mainExecutablePath, bool shared,
+     llvm::SmallVectorImpl<char> &runtimeResourcePath) {
++  if (mainExecutablePath.startswith("@storeDir@")) {
++	auto libPath = StringRef("@lib@");
++	runtimeResourcePath.append(libPath.begin(), libPath.end());
++  } else {
+   runtimeResourcePath.append(mainExecutablePath.begin(),
+                              mainExecutablePath.end());
+ 
+   llvm::sys::path::remove_filename(runtimeResourcePath); // Remove /swift
+   llvm::sys::path::remove_filename(runtimeResourcePath); // Remove /bin
++  }
+   appendSwiftLibDir(runtimeResourcePath, shared);
+ }
+ 

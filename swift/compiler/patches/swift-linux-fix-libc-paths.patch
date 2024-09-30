@@ -1,0 +1,46 @@
+diff --git a/lib/ClangImporter/ClangIncludePaths.cpp b/lib/ClangImporter/ClangIncludePaths.cpp
+index f76fd229c54..80da945eef4 100644
+--- a/lib/ClangImporter/ClangIncludePaths.cpp
++++ b/lib/ClangImporter/ClangIncludePaths.cpp
+@@ -130,6 +130,7 @@ createClangDriver(const ASTContext &ctx,
+ /// \return a path without dots (`../`, './').
+ static std::optional<Path> findFirstIncludeDir(
+     const llvm::opt::InputArgList &args,
++	const llvm::opt::ArgList &DriverArgs,
+     const ArrayRef<const char *> expectedFileNames,
+     const llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> &vfs) {
+   // C++ stdlib paths are added as `-internal-isystem`.
+@@ -140,6 +141,15 @@ static std::optional<Path> findFirstIncludeDir(
+                      args.getAllArgValues(
+                          clang::driver::options::OPT_internal_externc_isystem));
+ 
++  // Nix adds the C stdlib include path using `-idirafter`.
++  llvm::append_range(includeDirs,
++		  DriverArgs.getAllArgValues(
++			  clang::driver::options::OPT_idirafter));
++  // Nix adds the C++ stdlib include path using `-isystem`.
++  llvm::append_range(includeDirs,
++		  DriverArgs.getAllArgValues(
++			  clang::driver::options::OPT_isystem));
++
+   for (const auto &includeDir : includeDirs) {
+     Path dir(includeDir);
+     bool allExpectedExist = true;
+@@ -200,7 +210,7 @@ getLibcFileMapping(ASTContext &ctx, StringRef modulemapFileName,
+   // modulemap are present.
+   Path libcDir;
+   if (auto dir = findFirstIncludeDir(
+-          parsedIncludeArgs, {"inttypes.h", "unistd.h", "stdint.h"}, vfs)) {
++          parsedIncludeArgs, clangDriverArgs, {"inttypes.h", "unistd.h", "stdint.h"}, vfs)) {
+     libcDir = dir.value();
+   } else {
+     ctx.Diags.diagnose(SourceLoc(), diag::libc_not_found, triple.str());
+@@ -266,7 +276,7 @@ static void getLibStdCxxFileMapping(
+   auto parsedStdlibArgs = parseClangDriverArgs(clangDriver, stdlibArgStrings);
+ 
+   Path cxxStdlibDir;
+-  if (auto dir = findFirstIncludeDir(parsedStdlibArgs,
++  if (auto dir = findFirstIncludeDir(parsedStdlibArgs, clangDriverArgs,
+                                      {"cstdlib", "string", "vector"}, vfs)) {
+     cxxStdlibDir = dir.value();
+   } else {

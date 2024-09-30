@@ -1,0 +1,24 @@
+diff --git a/llvm/lib/Support/Unix/Path.inc b/llvm/lib/Support/Unix/Path.inc
+index bbab4888ed0c..396ca72487d7 100644
+--- a/llvm/lib/Support/Unix/Path.inc
++++ b/llvm/lib/Support/Unix/Path.inc
+@@ -1432,6 +1432,9 @@ bool user_config_directory(SmallVectorImpl<char> &result) {
+   if (!home_directory(result)) {
+     return false;
+   }
++  if (std::equal(result.begin(), result.end(), "/homeless-shelter")) {
++	return false;
++  }
+   append(result, ".config");
+   return true;
+ }
+@@ -1453,6 +1456,9 @@ bool cache_directory(SmallVectorImpl<char> &result) {
+   if (!home_directory(result)) {
+     return false;
+   }
++  if (std::equal(result.begin(), result.end(), "/homeless-shelter")) {
++	system_temp_directory(true/*ErasedOnReboot*/, result);
++  }
+   append(result, ".cache");
+   return true;
+ }

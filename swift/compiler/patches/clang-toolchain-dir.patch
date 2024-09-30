@@ -1,0 +1,13 @@
+diff --git a/clang/lib/Driver/ToolChains/Linux.cpp b/clang/lib/Driver/ToolChains/Linux.cpp
+index c033fd9fd72b..8367b92f6999 100644
+--- a/clang/lib/Driver/ToolChains/Linux.cpp
++++ b/clang/lib/Driver/ToolChains/Linux.cpp
+@@ -643,7 +643,7 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
+ 
+   // Check for configure-time C include directories.
+   StringRef CIncludeDirs(C_INCLUDE_DIRS);
+-  if (CIncludeDirs != "") {
++  if (CIncludeDirs != "" && (SysRoot.empty() || SysRoot == "/")) {
+     SmallVector<StringRef, 5> dirs;
+     CIncludeDirs.split(dirs, ":");
+     for (StringRef dir : dirs) {
