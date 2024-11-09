@@ -6,9 +6,7 @@
 , coreutils
 , gnugrep
 , perl
-, ninja
-, swift_toolchain
-, host_libdispatch
+, ninja_1_11
 , pkg-config
 , clang
 , bintools
@@ -32,38 +30,28 @@
 # Darwin-specific
 , substituteAll
 , fixDarwinDylibNames
-, runCommandLocal
 , xcbuild
 , cctools # libtool
 , sigtool
 , DarwinTools
-, CoreServices
-, Foundation
-, Combine
-, MacOSX-SDK
-, CLTools_Executables
-, zlib
+, apple-sdk_13
+, darwinMinVersionHook
 }:
 
 let
+  apple-sdk_swift = apple-sdk_13; # Use the SDK that was available when Swift shipped.
+
+  deploymentVersion =
+    if lib.versionOlder (targetPlatform.darwinMinVersion or "0") "10.15" then
+      "10.15"
+    else
+      targetPlatform.darwinMinVersion;
+
   python3 = python3Packages.python.withPackages (p: [ p.setuptools ]); # python 3.12 compat.
 
   inherit (stdenv) hostPlatform targetPlatform;
 
   sources = callPackage ../sources.nix { };
-
-  # Tools invoked by swift at run-time.
-  runtimeDeps = lib.optionals stdenv.hostPlatform.isDarwin [
-    # libtool is used for static linking. This is part of cctools, but adding
-    # that as a build input puts an unwrapped linker in PATH, and breaks
-    # builds. This small derivation exposes just libtool.
-    # NOTE: The same applies to swift-driver, but that is currently always
-    # invoked via the old `swift` / `swiftc`. May change in the future.
-    (runCommandLocal "libtool" { } ''
-      mkdir -p $out/bin
-      ln -s ${cctools}/bin/libtool $out/bin/libtool
-    '')
-  ];
 
   # There are apparently multiple naming conventions on Darwin. Swift uses the
   # xcrun naming convention. See `configure_sdk_darwin` calls in CMake files.
@@ -100,26 +88,17 @@ let
 
   # This matches _SWIFT_DEFAULT_COMPONENTS, with specific components disabled.
   swiftInstallComponents = [
-    ## "autolink-driver"
-    ## "back-deployment"
+    "autolink-driver"
     "compiler"
-    # "compiler-swift-syntax-lib" # NEW
-    ## "clang-builtin-headers"
-    ## "clang-resource-dir-symlink"
-    ## "clang-builtin-headers-in-clang-resource-dir"
-    # "libexec" # NEW
+    # "clang-builtin-headers"
     "stdlib"
-    ## "stdlib-experimental"
     "sdk-overlay"
     "static-mirror-lib"
-    # "swift-syntax-lib" # NEW
     "editor-integration"
-    ## "tools"
-    ## "testsuite-tools"
+    # "tools"
+    # "testsuite-tools"
     "toolchain-tools"
     "toolchain-dev-tools"
-    ## "llvm-toolchain-dev-tools"
-    ## "dev"
     "license"
     (if stdenv.hostPlatform.isDarwin then "sourcekit-xpc-service" else "sourcekit-inproc")
     "swift-remote-mirror"
@@ -170,7 +149,9 @@ let
     # NOTE: @prog@ needs to be filled elsewhere.
   };
   swiftWrapper = runCommand "swift-wrapper.sh" wrapperParams ''
-    substituteAll '${../wrapper/wrapper.sh}' "$out"
+    # Make empty to avoid adding the SDK’s modules in the bootstrap wrapper. Otherwise, the SDK conflicts with the
+    # shims the wrapper tries to build.
+    darwinMinVersion="" substituteAll '${../wrapper/wrapper.sh}' "$out"
   '';
   makeSwiftcWrapper = writeShellScriptBin "nix-swift-make-swift-wrapper" ''
     set -euo pipefail
@@ -191,14 +172,31 @@ let
     name = "apple-swift-core";
     dontUnpack = true;
 
+    buildInputs = [ apple-sdk_swift ];
+
     installPhase = ''
       mkdir -p $out/lib/swift
       cp -r \
-        "${MacOSX-SDK}/usr/lib/swift/Swift.swiftmodule" \
-        "${MacOSX-SDK}/usr/lib/swift/libswiftCore.tbd" \
+        "$SDKROOT/usr/lib/swift/Swift.swiftmodule" \
+        "$SDKROOT/usr/lib/swift/CoreFoundation.swiftmodule" \
+        "$SDKROOT/usr/lib/swift/Dispatch.swiftmodule" \
+        "$SDKROOT/usr/lib/swift/ObjectiveC.swiftmodule" \
+        "$SDKROOT/usr/lib/swift/libswiftCore.tbd" \
+        "$SDKROOT/usr/lib/swift/libswiftCoreFoundation.tbd" \
+        "$SDKROOT/usr/lib/swift/libswiftDispatch.tbd" \
+        "$SDKROOT/usr/lib/swift/libswiftFoundation.tbd" \
+        "$SDKROOT/usr/lib/swift/libswiftObjectiveC.tbd" \
         $out/lib/swift/
     '';
   };
+
+  # https://github.com/NixOS/nixpkgs/issues/327836
+  # Fail to build with ninja 1.12 when NIX_BUILD_CORES is low (Hydra or Github Actions).
+  # Can reproduce using `nix --option cores 2 build -f . swiftPackages.swift-unwrapped`.
+  # Until we find out the exact cause, follow [swift upstream][1], pin ninja to version
+  # 1.11.1.
+  # [1]: https://github.com/swiftlang/swift/pull/72989
+  ninja = ninja_1_11;
 
 in stdenv.mkDerivation {
   pname = "swift";
@@ -213,11 +211,7 @@ in stdenv.mkDerivation {
     perl # pod2man
     pkg-config
     python3
-    zlib
-    swift_toolchain
-    host_libdispatch
     makeWrapper
-      #glibc
     makeClangWrapper
     makeSwiftcWrapper
   ]
@@ -226,6 +220,7 @@ in stdenv.mkDerivation {
       sigtool # codesign
       DarwinTools # sw_vers
       fixDarwinDylibNames
+      cctools.libtool
     ];
 
   buildInputs = [
@@ -238,10 +233,15 @@ in stdenv.mkDerivation {
       libuuid
     ]
     ++ lib.optionals stdenv.hostPlatform.isDarwin [
-      CoreServices
-      Foundation
-      Combine
+      apple-sdk_swift
+      (darwinMinVersionHook deploymentVersion)
     ];
+
+  # Will effectively be `buildInputs` when swift is put in `nativeBuildInputs`.
+  depsTargetTargetPropagated = lib.optionals stdenv.targetPlatform.isDarwin [
+    apple-sdk_swift
+    (darwinMinVersionHook deploymentVersion)
+  ];
 
   # This is a partial reimplementation of our setup hook. Because we reuse
   # the Swift wrapper for the Swift build itself, we need to do some of the
@@ -272,7 +272,7 @@ in stdenv.mkDerivation {
     mkdir src
     cd src
 
-    ${copySource "cmark"}
+    ${copySource "swift-cmark"}
     ${copySource "llvm-project"}
     ${copySource "swift"}
     ${copySource "swift-experimental-string-processing"}
@@ -296,10 +296,20 @@ in stdenv.mkDerivation {
       -e 's|/bin/cp|${coreutils}/bin/cp|g' \
       -e 's|/usr/bin/file|${file}/bin/file|g'
 
+    patch -p1 -d swift -i ${./patches/swift-cmake-3.25-compat.patch}
     patch -p1 -d swift -i ${./patches/swift-wrap.patch}
-    patch -p1 -d swift -i ${./patches/swift-nix-resource-root-1.patch}
-    patch -p1 -d swift -i ${./patches/swift-nix-resource-root-2.patch}
+    patch -p1 -d swift -i ${./patches/swift-nix-resource-root.patch}
     patch -p1 -d swift -i ${./patches/swift-linux-fix-libc-paths.patch}
+    patch -p1 -d swift -i ${./patches/swift-linux-fix-linking.patch}
+    patch -p1 -d swift -i ${./patches/swift-darwin-libcxx-flags.patch}
+    patch -p1 -d swift -i ${substituteAll {
+      src = ./patches/swift-darwin-plistbuddy-workaround.patch;
+      inherit swiftArch;
+    }}
+    patch -p1 -d swift -i ${substituteAll {
+      src = ./patches/swift-prevent-sdk-dirs-warning.patch;
+      inherit (builtins) storeDir;
+    }}
 
     # This patch needs to know the lib output location, so must be substituted
     # in the same derivation as the compiler.
@@ -307,16 +317,54 @@ in stdenv.mkDerivation {
       substituteAll ${./patches/swift-separate-lib.patch} $TMPDIR/swift-separate-lib.patch
     patch -p1 -d swift -i $TMPDIR/swift-separate-lib.patch
 
-    patch -p1 -d llvm-project -i ${./patches/llvm-module-cache.patch}
+    patch -p1 -d llvm-project/llvm -i ${./patches/llvm-module-cache.patch}
 
-    patch -p1 -d llvm-project -i ${./patches/clang-toolchain-dir.patch}
-    patch -p1 -d llvm-project -i ${./patches/clang-wrap.patch}
+    for lldbPatch in ${lib.escapeShellArgs [
+      # Fixes for SWIG 4
+      (fetchpatch2 {
+        url = "https://github.com/llvm/llvm-project/commit/81fc5f7909a4ef5a8d4b5da2a10f77f7cb01ba63.patch?full_index=1";
+        stripLen = 1;
+        hash = "sha256-Znw+C0uEw7lGETQLKPBZV/Ymo2UigZS+Hv/j1mUo7p0=";
+      })
+      (fetchpatch2 {
+        url = "https://github.com/llvm/llvm-project/commit/f0a25fe0b746f56295d5c02116ba28d2f965c175.patch?full_index=1";
+        stripLen = 1;
+        hash = "sha256-QzVeZzmc99xIMiO7n//b+RNAvmxghISKQD93U2zOgFI=";
+      })
+      (fetchpatch2 {
+        url = "https://github.com/llvm/llvm-project/commit/ba35c27ec9aa9807f5b4be2a0c33ca9b045accc7.patch?full_index=1";
+        stripLen = 1;
+        hash = "sha256-LXl+WbpmWZww5xMDrle3BM2Tw56v8k9LO1f1Z1/wDTs=";
+      })
+      (fetchpatch2 {
+        url = "https://github.com/llvm/llvm-project/commit/9ec115978ea2bdfc60800cd3c21264341cdc8b0a.patch?full_index=1";
+        stripLen = 1;
+        hash = "sha256-u0zSejEjfrH3ZoMFm1j+NVv2t5AP9cE5yhsrdTS1dG4=";
+      })
+    ]}; do
+      patch -p1 -d llvm-project/lldb -i $lldbPatch
+    done
 
+    patch -p1 -d llvm-project/clang -i ${./patches/clang-toolchain-dir.patch}
+    patch -p1 -d llvm-project/clang -i ${./patches/clang-wrap.patch}
+    patch -p1 -d llvm-project/clang -i ${../../llvm/12/clang/purity.patch}
+    patch -p2 -d llvm-project/clang -i ${fetchpatch {
+      name = "clang-cmake-fix-interpreter.patch";
+      url = "https://github.com/llvm/llvm-project/commit/b5eaf500f2441eff2277ea2973878fb1f171fd0a.patch";
+      sha256 = "1rma1al0rbm3s3ql6bnvbcighp74lri1lcrwbyacgdqp80fgw1b6";
+    }}
+
+   # gcc-13 build fixes
+    patch -p2 -d llvm-project/llvm -i ${fetchpatch {
+      name = "gcc-13.patch";
+      url = "https://github.com/llvm/llvm-project/commit/ff1681ddb303223973653f7f5f3f3435b48a1983.patch";
+      hash = "sha256-nkRPWx8gNvYr7mlvEUiOAb1rTrf+skCZjAydJVUHrcI=";
+    }}
 
     ${lib.optionalString stdenv.hostPlatform.isLinux ''
     substituteInPlace llvm-project/clang/lib/Driver/ToolChains/Linux.cpp \
-      --replace 'SysRoot, "/lib' '"", "${glibc}/lib' \
-      --replace 'SysRoot, "/usr/lib' '"", "${glibc}/lib' \
+      --replace 'SysRoot + "/lib' '"${glibc}/lib" "' \
+      --replace 'SysRoot + "/usr/lib' '"${glibc}/lib" "' \
       --replace 'LibDir = "lib";' 'LibDir = "${glibc}/lib";' \
       --replace 'LibDir = "lib64";' 'LibDir = "${glibc}/lib";' \
       --replace 'LibDir = X32 ? "libx32" : "lib64";' 'LibDir = "${glibc}/lib";'
@@ -367,9 +415,6 @@ in stdenv.mkDerivation {
     mkdir -p ../build
     cd ../build
     export SWIFT_BUILD_ROOT="$PWD"
-
-    # Most builds set a target, but LLDB doesn't. Harmless on non-Darwin.
-    export MACOSX_DEPLOYMENT_TARGET=10.15
   '';
 
   # These steps are derived from doing a normal build with.
@@ -404,7 +449,7 @@ in stdenv.mkDerivation {
     }
 
     cmakeFlags="-GNinja"
-    buildProject cmark
+    buildProject swift-cmark
 
     # Some notes:
     # - The Swift build just needs Clang.
@@ -420,14 +465,10 @@ in stdenv.mkDerivation {
     buildProject llvm llvm-project/llvm
 
     '' + lib.optionalString stdenv.hostPlatform.isDarwin ''
-    # Add appleSwiftCore to the search paths. We can't simply add it to
-    # buildInputs, because it is potentially an older stdlib than the one we're
-    # building. We have to remove it again after the main Swift build, or later
-    # build steps may fail. (Specific case: Concurrency backdeploy uses the
-    # Sendable protocol, which appears to not be present in the macOS 11 SDK.)
+    # Add appleSwiftCore to the search paths. Adding the whole SDK results in build failures.
     OLD_NIX_SWIFTFLAGS_COMPILE="$NIX_SWIFTFLAGS_COMPILE"
     OLD_NIX_LDFLAGS="$NIX_LDFLAGS"
-    export NIX_SWIFTFLAGS_COMPILE+=" -I ${appleSwiftCore}/lib/swift"
+    export NIX_SWIFTFLAGS_COMPILE=" -I ${appleSwiftCore}/lib/swift"
     export NIX_LDFLAGS+=" -L ${appleSwiftCore}/lib/swift"
     '' + ''
 
@@ -443,28 +484,23 @@ in stdenv.mkDerivation {
     # - SWIFT_STDLIB_ENABLE_OBJC_INTEROP is set explicitely because its check
     #   is buggy. (Uses SWIFT_HOST_VARIANT_SDK before initialized.)
     #   Fixed in: https://github.com/apple/swift/commit/84083afef1de5931904d5c815d53856cdb3fb232
-    # REMOVED: 
-    # -DCOMPILER_RT_BUILD_ORC:BOOL=FALSE
-    # -DSWIFT_PATH_TO_SWIFT_SYNTAX_SOURCE=$SWIFT_SOURCE_ROOT/swift-syntax
-    # -DSWIFT_PATH_TO_LIBDISPATCH_SOURCE=$SWIFT_SOURCE_ROOT/swift-corelibs-libdispatch
- 
     cmakeFlags="
       -GNinja
+      -DBOOTSTRAPPING_MODE=BOOTSTRAPPING${lib.optionalString stdenv.hostPlatform.isDarwin "-WITH-HOSTLIBS"}
       -DSWIFT_ENABLE_EXPERIMENTAL_DIFFERENTIABLE_PROGRAMMING=ON
       -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON
       -DSWIFT_ENABLE_EXPERIMENTAL_DISTRIBUTED=ON
       -DSWIFT_ENABLE_EXPERIMENTAL_STRING_PROCESSING=ON
       -DLLVM_DIR=$SWIFT_BUILD_ROOT/llvm/lib/cmake/llvm
       -DClang_DIR=$SWIFT_BUILD_ROOT/llvm/lib/cmake/clang
-      -DSWIFT_PATH_TO_CMARK_SOURCE=$SWIFT_SOURCE_ROOT/cmark
-      -DSWIFT_PATH_TO_CMARK_BUILD=$SWIFT_BUILD_ROOT/cmark
-      -DBUILD_TESTING:BOOL=FALSE
-      -DSWIFT_INCLUDE_TESTS:BOOL=FALSE
-      -DSWIFT_INCLUDE_TEST_BINARIES:BOOL=FALSE
+      -DSWIFT_PATH_TO_CMARK_SOURCE=$SWIFT_SOURCE_ROOT/swift-cmark
+      -DSWIFT_PATH_TO_CMARK_BUILD=$SWIFT_BUILD_ROOT/swift-cmark
+      -DSWIFT_PATH_TO_LIBDISPATCH_SOURCE=$SWIFT_SOURCE_ROOT/swift-corelibs-libdispatch
+      -DSWIFT_PATH_TO_SWIFT_SYNTAX_SOURCE=$SWIFT_SOURCE_ROOT/swift-syntax
       -DSWIFT_PATH_TO_STRING_PROCESSING_SOURCE=$SWIFT_SOURCE_ROOT/swift-experimental-string-processing
       -DSWIFT_INSTALL_COMPONENTS=${lib.concatStringsSep ";" swiftInstallComponents}
       -DSWIFT_STDLIB_ENABLE_OBJC_INTEROP=${if stdenv.hostPlatform.isDarwin then "ON" else "OFF"}
-      -DBOOTSTRAPPING_MODE:STRING=BOOTSTRAPPING
+      -DSWIFT_DARWIN_DEPLOYMENT_VERSION_OSX=${deploymentVersion}
     "
     buildProject swift
 
@@ -480,12 +516,6 @@ in stdenv.mkDerivation {
     # which requires a special signature.
     #
     # CMAKE_BUILD_WITH_INSTALL_NAME_DIR ensures we don't use rpath on Darwin.
-    #
-    # NOTE: On Darwin, we only want ncurses in the linker search path, because
-    # headers are part of libsystem. Adding its headers to the search path
-    # causes strange mixing and errors. Note that libedit propagates ncurses,
-    # so we add both manually here, instead of relying on setup hooks.
-    # TODO: Find a better way to prevent this conflict.
     cmakeFlags="
       -GNinja
       -DLLDB_SWIFTC=$SWIFT_BUILD_ROOT/swift/bin/swiftc
@@ -503,11 +533,11 @@ in stdenv.mkDerivation {
       ${lib.optionalString stdenv.hostPlatform.isDarwin ''
       -DLLDB_USE_SYSTEM_DEBUGSERVER=ON
       ''}
-      -DLibEdit_INCLUDE_DIRS=${libedit.dev}/include
-      -DLibEdit_LIBRARIES=${libedit}/lib/libedit${stdenv.hostPlatform.extensions.sharedLibrary}
-      -DCURSES_INCLUDE_DIRS=${if stdenv.hostPlatform.isDarwin then "/var/empty" else ncurses.dev}/include
-      -DCURSES_LIBRARIES=${ncurses}/lib/libncurses${stdenv.hostPlatform.extensions.sharedLibrary}
-      -DPANEL_LIBRARIES=${ncurses}/lib/libpanel${stdenv.hostPlatform.extensions.sharedLibrary}
+      -DLibEdit_INCLUDE_DIRS=${lib.getInclude libedit}/include
+      -DLibEdit_LIBRARIES=${lib.getLib libedit}/lib/libedit${stdenv.hostPlatform.extensions.sharedLibrary}
+      -DCURSES_INCLUDE_DIRS=${lib.getInclude ncurses}/include
+      -DCURSES_LIBRARIES=${lib.getLib ncurses}/lib/libncurses${stdenv.hostPlatform.extensions.sharedLibrary}
+      -DPANEL_LIBRARIES=${lib.getLib ncurses}/lib/libpanel${stdenv.hostPlatform.extensions.sharedLibrary}
     ";
     buildProject lldb llvm-project/lldb
 
@@ -560,7 +590,7 @@ in stdenv.mkDerivation {
       -DSWIFT_DEST_ROOT=$out
       -DSWIFT_HOST_VARIANT_SDK=OSX
 
-      -DSWIFT_DARWIN_DEPLOYMENT_VERSION_OSX=10.15
+      -DSWIFT_DARWIN_DEPLOYMENT_VERSION_OSX=${deploymentVersion}
       -DSWIFT_DARWIN_DEPLOYMENT_VERSION_IOS=13.0
       -DSWIFT_DARWIN_DEPLOYMENT_VERSION_MACCATALYST=13.0
       -DSWIFT_DARWIN_DEPLOYMENT_VERSION_TVOS=13.0
@@ -596,7 +626,7 @@ in stdenv.mkDerivation {
     # Undo the clang and swift wrapping we did for the build.
     # (This happened via patches to cmake files.)
     cd $SWIFT_BUILD_ROOT
-    mv llvm/bin/clang-16{-unwrapped,}
+    mv llvm/bin/clang-15{-unwrapped,}
     mv swift/bin/swift-frontend{-unwrapped,}
 
     mkdir $out $lib
@@ -642,12 +672,6 @@ in stdenv.mkDerivation {
     # just copying the 3 symlinks inside to smaller closures.
     mkdir $lib/lib/swift/clang
     cp -P ${clang}/resource-root/* $lib/lib/swift/clang/
-
-    ${lib.optionalString stdenv.hostPlatform.isDarwin ''
-    # Install required library for ObjC interop.
-    # TODO: Is there no source code for this available?
-    cp -r ${CLTools_Executables}/usr/lib/arc $out/lib/arc
-    ''}
   '';
 
   preFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
@@ -687,7 +711,10 @@ in stdenv.mkDerivation {
     done
 
     wrapProgram $out/bin/swift-frontend \
-      --prefix PATH : ${lib.makeBinPath runtimeDeps}
+      --prefix PATH : ${lib.makeBinPath [ cctools.libtool ]}
+
+    # Needs to be propagated by the compiler not by its dev output.
+    moveToOutput nix-support/propagated-target-target-deps "$out"
   '';
 
   passthru = {

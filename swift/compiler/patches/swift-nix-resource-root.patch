@@ -25,7 +25,7 @@ second (ToolChains.cpp) happens when Swift is used to link the final product.
 +    // niche use case, though, and for now a user can unset NIX_CC to work
 +    // around it if necessary.
 +    if (auto nixCC = llvm::sys::Process::GetEnv("NIX_CC")) {
-+      llvm::SmallString<128> resourceDir(nixCC.value());
++      llvm::SmallString<128> resourceDir(nixCC.getValue());
 +      llvm::sys::path::append(resourceDir, "resource-root");
 +      invocationArgStrs.push_back("-resource-dir");
 +      invocationArgStrs.push_back(std::string(resourceDir.str()));
@@ -52,7 +52,7 @@ second (ToolChains.cpp) happens when Swift is used to link the final product.
 +  // a different stdenv. However, always honor a user-provided `-resource-dir`.
 +  auto nixCC = llvm::sys::Process::GetEnv("NIX_CC");
 +  if (nixCC && !Args.hasArgNoClaim(options::OPT_resource_dir)) {
-+    LibPath.assign(nixCC.value());
++    LibPath.assign(nixCC.getValue());
 +    llvm::sys::path::append(LibPath, "resource-root");
 +  } else {
    getResourceDirPath(LibPath, Args, /*Shared=*/true);
