@@ -7,7 +7,7 @@ index a945f376fa3..a638d9fbf25 100644
      // If there is a linker driver in the toolchain folder, use that instead.
      if (auto tool = llvm::sys::findProgramByName(LinkerDriver, {toolchainPath}))
 -      LinkerDriver = Args.MakeArgString(tool.get());
-+	  return Args.MakeArgString(tool.get());
++	   return Args.MakeArgString(tool.get());
 +  }
 +
 +  // For Nix, prefer linking using the wrapped system clang, instead of using

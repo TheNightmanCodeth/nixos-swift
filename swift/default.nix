@@ -69,11 +69,12 @@ let
     swiftNoSwiftDriver = callPackage ./wrapper {
       swift = swift-unwrapped;
       useSwiftDriver = false;
+      libdispatch = Dispatch;
     };
 
     Dispatch = if stdenv.hostPlatform.isDarwin
       then null # part of libsystem
-      else callPackage ./libdispatch { swift = swiftNoSwiftDriver; };
+      else callPackage ./libdispatch { swift = swift_toolchain; };
 
     Foundation = if stdenv.hostPlatform.isDarwin
       then apple_sdk.frameworks.Foundation
@@ -99,6 +100,7 @@ let
 
     swift = callPackage ./wrapper {
       swift = swift-unwrapped;
+      libdispatch = Dispatch;
     };
 
     sourcekit-lsp = callPackage ./sourcekit-lsp {

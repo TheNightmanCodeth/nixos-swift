@@ -2,7 +2,7 @@
   description = "Swift 6, god willing";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs";
+    nixpkgs.url = "github:nixos/nixpkgs/staging";
     swift-github = {
       url = "github:swiftlang/swift";
       flake = false;
@@ -21,13 +21,11 @@
         llvmPackages = pkgs.llvmPackages;
         llvmPackages_17 = pkgs.llvmPackages_17;
         overrideCC = pkgs.overrideCC;
-        swift_toolchain = pkgs.swiftPackages.swift-driver;
-        host_libdispatch = pkgs.swift-corelibs-libdispatch;
+        swift_toolchain = pkgs.swift;
+        host_libdispatch = pkgs.swiftPackages.Dispatch; # pkgs.swift-corelibs-libdispatch;
       };
     in {
-    nixosModules = rec {
-      swift_6 = swiftPkg.swift;
-      default = swift_6;
-    };
+      packages.aarch64-linux.default = swiftPkg.swift;
+      packages.aarch64-linux.swiftpm6 = swiftPkg.swiftpm;
   };
 }

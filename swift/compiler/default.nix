@@ -167,6 +167,7 @@ let
     suffixSalt = lib.replaceStrings ["-" "."] ["_" "_"] targetPlatform.config;
     use_response_file_by_default = 1;
     swiftDriver = "";
+    libdispatch = "${host_libdispatch}/lib";
     # NOTE: @prog@ needs to be filled elsewhere.
   };
   swiftWrapper = runCommand "swift-wrapper.sh" wrapperParams ''
@@ -300,6 +301,12 @@ in stdenv.mkDerivation {
     patch -p1 -d swift -i ${./patches/swift-nix-resource-root-1.patch}
     patch -p1 -d swift -i ${./patches/swift-nix-resource-root-2.patch}
     patch -p1 -d swift -i ${./patches/swift-linux-fix-libc-paths.patch}
+    #patch -p1 -d swift -i ${./patches/swift-linux-fix-linking.patch}
+
+    patch -p1 -d swift-corelibs-libdispatch ${../libdispatch/disable-swift-overlay.patch}
+
+    patch -p1 -d swift-driver ${../swift-driver/patches/linux-fix-linking.patch}
+    patch -p1 -d swift-driver ${../swift-driver/patches/nix-resource-root.patch}
 
     # This patch needs to know the lib output location, so must be substituted
     # in the same derivation as the compiler.
@@ -396,7 +403,7 @@ in stdenv.mkDerivation {
     function buildProject() {
       mkdir -p $SWIFT_BUILD_ROOT/$1
       cd $SWIFT_BUILD_ROOT/$1
-
+      
       cmakeDir=$SWIFT_SOURCE_ROOT/''${2-$1}
       cmakeConfigurePhase
 
@@ -427,9 +434,14 @@ in stdenv.mkDerivation {
     # Sendable protocol, which appears to not be present in the macOS 11 SDK.)
     OLD_NIX_SWIFTFLAGS_COMPILE="$NIX_SWIFTFLAGS_COMPILE"
     OLD_NIX_LDFLAGS="$NIX_LDFLAGS"
-    export NIX_SWIFTFLAGS_COMPILE+=" -I ${appleSwiftCore}/lib/swift"
-    export NIX_LDFLAGS+=" -L ${appleSwiftCore}/lib/swift"
+    export NIX_SWIFTFLAGS_COMPILE+=" -I ${appleSwiftCore}/lib/swift -I /build/build/swift/./lib/swift/linux"
+    export NIX_LDFLAGS+=" -L ${appleSwiftCore}/lib/swift -L /build/build/swift/./lib/swift/linux"
     '' + ''
+
+    OLD_NIX_SWIFTFLAGS_COMPILE="$NIX_SWIFTFLAGS_COMPILE"
+    OLD_NIX_LDFLAGS="$NIX_LDFLAGS"
+    export NIX_SWIFTFLAGS_COMPILE+=" -I ${host_libdispatch}/lib"
+    export NIX_LDFLAGS+=" -L ${host_libdispatch}/lib"
 
     # Some notes:
     # - BOOTSTRAPPING_MODE defaults to OFF in CMake, but is enabled in standard
@@ -447,7 +459,9 @@ in stdenv.mkDerivation {
     # -DCOMPILER_RT_BUILD_ORC:BOOL=FALSE
     # -DSWIFT_PATH_TO_SWIFT_SYNTAX_SOURCE=$SWIFT_SOURCE_ROOT/swift-syntax
     # -DSWIFT_PATH_TO_LIBDISPATCH_SOURCE=$SWIFT_SOURCE_ROOT/swift-corelibs-libdispatch
- 
+    # -DSWIFT_PATH_TO_LIBDISPATCH_BUILD=$SWIFT_BUILD_ROOT/libdispatch
+    # -DSWIFT_BUILD_STATIC_STDLIB=TRUE
+    # -DSWIFT_STDLIB_ENABLE_LTO=full
     cmakeFlags="
       -GNinja
       -DSWIFT_ENABLE_EXPERIMENTAL_DIFFERENTIABLE_PROGRAMMING=ON
@@ -458,15 +472,25 @@ in stdenv.mkDerivation {
       -DClang_DIR=$SWIFT_BUILD_ROOT/llvm/lib/cmake/clang
       -DSWIFT_PATH_TO_CMARK_SOURCE=$SWIFT_SOURCE_ROOT/cmark
       -DSWIFT_PATH_TO_CMARK_BUILD=$SWIFT_BUILD_ROOT/cmark
+      -DSWIFT_BUILD_STATIC_STDLIB:BOOL=TRUE
+      -DSWIFT_STDLIB_STATIC_PRINT:BOOL=TRUE
+      -DSWIFT_PATH_TO_SWIFT_SYNTAX_SOURCE=$SWIFT_SOURCE_ROOT/swift-syntax
+      -DSWIFT_PATH_TO_SWIFT_SYNTAX_BUILD=$SWIFT_BUILD_ROOT/swift-syntax
+      -DSWIFT_PATH_TO_LIBDISPATCH_SOURCE=$SWIFT_SOURCE_ROOT/swift-corelibs-libdispatch
+      -DSWIFT_PATH_TO_LIBDISPATCH_BUILD=$SWIFT_BUILD_ROOT/swift-corelibs-libdispatch
+      -DSWIFT_BUILD_SWIFT_SYNTAX:BOOL=TRUE
       -DBUILD_TESTING:BOOL=FALSE
       -DSWIFT_INCLUDE_TESTS:BOOL=FALSE
       -DSWIFT_INCLUDE_TEST_BINARIES:BOOL=FALSE
       -DSWIFT_PATH_TO_STRING_PROCESSING_SOURCE=$SWIFT_SOURCE_ROOT/swift-experimental-string-processing
       -DSWIFT_INSTALL_COMPONENTS=${lib.concatStringsSep ";" swiftInstallComponents}
       -DSWIFT_STDLIB_ENABLE_OBJC_INTEROP=${if stdenv.hostPlatform.isDarwin then "ON" else "OFF"}
-      -DBOOTSTRAPPING_MODE:STRING=BOOTSTRAPPING
+      -DBOOTSTRAPPING_MODE:STRING=HOSTTOOLS
     "
     buildProject swift
+
+    export NIX_SWIFTFLAGS_COMPILE="$OLD_NIX_SWIFTFLAGS_COMPILE"
+    export NIX_LDFLAGS="$OLD_NIX_LDFLAGS"
 
     '' + lib.optionalString stdenv.hostPlatform.isDarwin ''
     # Restore search paths to remove appleSwiftCore.

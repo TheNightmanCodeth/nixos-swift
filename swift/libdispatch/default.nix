@@ -14,14 +14,14 @@ in stdenv.mkDerivation {
   inherit (sources) version;
   src = sources.swift-corelibs-libdispatch;
 
-  outputs = [ "out" "dev" "man" ];
+  outputs = [ "out" "dev" ];
 
   nativeBuildInputs = [ cmake ]
     ++ lib.optionals useSwift [ ninja swift ];
 
-  patches = [ ./disable-swift-overlay.patch ];
+    #patches = [ ./disable-swift-overlay.patch ];
 
-  cmakeFlags = lib.optional useSwift "-DENABLE_SWIFT=ON";
+  cmakeFlags = ["-DENABLE_SWIFT=ON"];
 
   postInstall = ''
     # Provide a CMake module. This is primarily used to glue together parts of

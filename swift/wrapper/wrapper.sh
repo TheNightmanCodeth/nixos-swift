@@ -1,7 +1,7 @@
 #! @shell@
 # NOTE: This wrapper is derived from cc-wrapper.sh, and is hopefully somewhat
 # diffable with the original, so changes can be merged if necessary.
-set -eu -o pipefail +o posix
+set -e -o pipefail +o posix
 shopt -s nullglob
 
 if (( "${NIX_DEBUG:-0}" >= 7 )); then
@@ -23,6 +23,12 @@ progName="$(basename "$prog")"
 firstArg="${params[0]:-}"
 isFrontend=0
 isRepl=0
+
+export LD_LIBRARY_PATH="`echo $LD_LIBRARY_PATH` @libdispatch@"
+echo "========================================PROGNAME============================"
+echo $progName
+echo $firstArg
+echo $prog
 
 # These checks follow `shouldRunAsSubcommand`.
 if [[ "$progName" == swift ]]; then
@@ -73,6 +79,7 @@ if [[
     -z "${SWIFT_USE_OLD_DRIVER:-}" &&
     ( "$progName" == "swift" || "$progName" == "swiftc" )
 ]]; then
+	echo "========================0==================="
     prog=@swiftDriver@
     # Driver mode must be the very first argument.
     extraBefore+=( "--driver-mode=$progName" )
@@ -119,6 +126,7 @@ linkType=$(checkLinkType "${params[@]}")
 
 # Optionally filter out paths not refering to the store.
 if [[ "${NIX_ENFORCE_PURITY:-}" = 1 && -n "$NIX_STORE" ]]; then
+	echo "==========================1===================="
     kept=()
     nParams=${#params[@]}
     declare -i n=0
@@ -212,7 +220,7 @@ addCFlagsToList extraAfter $NIX_CFLAGS_COMPILE_@suffixSalt@
 addCFlagsToList extraBefore ${hardeningCFlags[@]+"${hardeningCFlags[@]}"} $NIX_CFLAGS_COMPILE_BEFORE_@suffixSalt@
 
 if [ "$dontLink" != 1 ]; then
-
+	echo "=========================dontlink======================="
     # Add the flags that should only be passed to the compiler when
     # linking.
     addCFlagsToList extraAfter $(filterRpathFlags "$linkType" $NIX_CFLAGS_LINK_@suffixSalt@)
@@ -222,6 +230,10 @@ if [ "$dontLink" != 1 ]; then
     for i in $(filterRpathFlags "$linkType" $NIX_LDFLAGS_BEFORE_@suffixSalt@); do
         extraBefore+=("-Xlinker" "$i")
     done
+
+	extraBefore+=("-Xlinker" "-L $SWIFT_BUILD_ROOT/swift/libdispatch-linux-aarch64-prefix/lib")
+	extraBefore+=("-Xlinker" "-L @libdispatch@")
+
     if [[ "$linkType" == dynamic && -n "$NIX_DYNAMIC_LINKER_@suffixSalt@" ]]; then
         extraBefore+=("-Xlinker" "-dynamic-linker=$NIX_DYNAMIC_LINKER_@suffixSalt@")
     fi
@@ -285,8 +297,10 @@ if (( "${NIX_DEBUG:-0}" >= 1 )); then
 fi
 
 PATH="$path_backup"
+export LD_LIBRARY_PATH="`echo $LD_LIBRARY_PATH` @libdispatch@"
+echo "==========================LD_LIBRARY_PATH=========================="
+echo $LD_LIBRARY_PATH
 # Old bash workaround, see above.
-
 if (( "${NIX_CC_USE_RESPONSE_FILE:-@use_response_file_by_default@}" >= 1 )); then
     exec "$prog" @<(printf "%q\n" \
        ${extraBefore+"${extraBefore[@]}"} \
